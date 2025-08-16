@@ -22,8 +22,10 @@ When working with IoT devices:
 - Present device data in a clear, organized format
 - Explain device types and their typical functions
 - Provide helpful context about IoT device management
+- Use conversation history to provide contextual responses
+- Reference previous information when relevant to avoid redundant tool calls
 
-Always be helpful in explaining IoT concepts and device information in user-friendly terms.
+Always provide clean, user-friendly responses without exposing internal thinking processes.
 """
 
 def handler(event: Dict[str, Any], _context) -> Dict[str, Any]:
@@ -47,22 +49,42 @@ def handler(event: Dict[str, Any], _context) -> Dict[str, Any]:
         logger.info(f"Message: {message}")
         logger.info(f"Chat history length: {len(chat_history)}")
         
-        # Create the IoT agent
+        # Build complete conversation including current message
+        messages = []
+        
+        # Add chat history
+        for msg in chat_history:
+            role = "user" if msg.get("role") == "user" else "assistant"
+            messages.append({"role": role, "content": [{"text": msg.get("content", "")}]})
+        
+        # Add current message
+        messages.append({"role": "user", "content": [{"text": message}]})
+        
+        # Create agent with complete conversation history
         iot_agent = Agent(
             model="us.amazon.nova-pro-v1:0",
             system_prompt=IOT_SYSTEM_PROMPT,
             tools=[get_all_iot_devices, get_all_iot_thing_types, get_connected_devices, get_vehicle_gps_coordinates],
+            messages=messages
         )
-
-        # Get response from agent
+        
+        # Get response (agent will continue the conversation)
+        # For agents initialized with messages, we still need to provide a prompt
+        # Use the current message as the prompt
         response = iot_agent(message)
         
+        # Clean response by removing thinking tags
+        response_text = str(response)
+        if '<thinking>' in response_text:
+            import re
+            response_text = re.sub(r'<thinking>.*?</thinking>\s*', '', response_text, flags=re.DOTALL)
+        
         # Log the agent response
-        logger.info(f"Agent response: {response}")
+        logger.info(f"Agent response: {response_text}")
         
         # Prepare the response body
         response_body = {
-            'response': str(response),
+            'response': response_text,
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'success': True,
             'error': None
