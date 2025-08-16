@@ -134,10 +134,16 @@ Use the API Gateway endpoint to interact with the chatbot. The endpoint accepts 
 
 ```json
 {
-  "message": "Your question about IoT devices",
+  "message": "Your question about IoT devices (required)",
   "chat_history": []
 }
 ```
+
+**API Requirements:**
+- `message` field is **required** and cannot be empty
+- `chat_history` maintains conversation context (optional, defaults to `[]`)
+- First history message should be `"user"` role
+- Messages should alternate between `"user"` and `"assistant"`
 
 ### Example IoT Device Queries
 
@@ -151,51 +157,51 @@ curl -X POST "$API_URL" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
   -d '{
-    "message": "Show me all connected IoT devices",
+    "message": "What IoT devices do I have?",
     "chat_history": []
   }' | jq '.'
 
-# Get specific device types
+# Get connected devices
 curl -X POST "$API_URL" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
   -d '{
-    "message": "List all vehicle devices and their status",
+    "message": "Show me connected devices",
     "chat_history": []
   }' | jq '.'
 
-# Get GPS coordinates for a vehicle
+# Get device types
 curl -X POST "$API_URL" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
   -d '{
-    "message": "Get GPS coordinates for vehicle-001",
+    "message": "What types of devices do I have?",
     "chat_history": []
   }' | jq '.'
 
-# Analyze IoT device types
+# Vehicle-specific query
 curl -X POST "$API_URL" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
   -d '{
-    "message": "What types of IoT devices do I have and what are they used for?",
+    "message": "List vehicle devices only",
     "chat_history": []
   }' | jq '.'
 
-# Example with conversation history
+# Contextual follow-up with conversation history
 curl -X POST "$API_URL" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
   -d '{
-    "message": "Tell me more about the VehicleDevice type",
+    "message": "How many are connected?",
     "chat_history": [
       {
         "role": "user",
-        "content": "What types of IoT devices do I have?"
+        "content": "What vehicle devices do I have?"
       },
       {
         "role": "assistant",
-        "content": "You have several device types including VehicleDevice, HouseDevice, PetFeederDevice, and others."
+        "content": "You have 5 vehicle devices: XIAORedRocket, XIAONinja, XIAOBike, XIAOJimny, XIAOLiger."
       }
     ]
   }' | jq '.'
@@ -222,25 +228,46 @@ This API is designed to be consumed by frontend applications and web frameworks:
 
 ```javascript
 // React component example
-const ChatBot = () => {
-  const [messages, setMessages] = useState([]);
+const IoTChatBot = () => {
+  const [chatHistory, setChatHistory] = useState([]);
   const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const sendMessage = async (message) => {
-    const response = await fetch('https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/prod/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': 'YOUR_API_KEY'
-      },
-      body: JSON.stringify({
-        message: message,
-        chat_history: messages
-      })
-    });
+    if (!message.trim()) return; // Message cannot be empty
     
-    const data = await response.json();
-    return data.response;
+    setLoading(true);
+    try {
+      const response = await fetch('https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/prod/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'YOUR_API_KEY'
+        },
+        body: JSON.stringify({
+          message: message,
+          chat_history: chatHistory
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // Update chat history with user message and bot response
+        setChatHistory(prev => [
+          ...prev,
+          { role: 'user', content: message },
+          { role: 'assistant', content: data.response }
+        ]);
+        return data.response;
+      } else {
+        console.error('API Error:', data.error);
+      }
+    } catch (error) {
+      console.error('Network Error:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Component JSX...
@@ -250,9 +277,14 @@ const ChatBot = () => {
 #### JavaScript/TypeScript Integration
 
 ```typescript
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 interface ChatRequest {
-  message: string;
-  chat_history: Array<{role: string, content: string}>;
+  message: string; // Required, cannot be empty
+  chat_history: ChatMessage[];
 }
 
 interface ChatResponse {
@@ -262,18 +294,80 @@ interface ChatResponse {
   error: string | null;
 }
 
-const chatWithBot = async (message: string, history: any[]): Promise<ChatResponse> => {
-  const response = await fetch(API_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': API_KEY
-    },
-    body: JSON.stringify({ message, chat_history: history })
-  });
+class IoTChatbot {
+  private chatHistory: ChatMessage[] = [];
   
-  return response.json();
-};
+  constructor(private apiUrl: string, private apiKey: string) {}
+
+  async sendMessage(message: string): Promise<string> {
+    if (!message.trim()) {
+      throw new Error('Message cannot be empty');
+    }
+
+    const response = await fetch(`${this.apiUrl}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey
+      },
+      body: JSON.stringify({
+        message,
+        chat_history: this.chatHistory
+      })
+    });
+    
+    const data: ChatResponse = await response.json();
+    
+    if (data.success) {
+      // Update local chat history
+      this.chatHistory.push(
+        { role: 'user', content: message },
+        { role: 'assistant', content: data.response }
+      );
+      return data.response;
+    } else {
+      throw new Error(data.error || 'API request failed');
+    }
+  }
+
+  clearHistory(): void {
+    this.chatHistory = [];
+  }
+}
+```
+
+### Test Scenarios for Frontend Development
+
+#### 1. First Message (No History)
+```json
+{
+  "message": "What IoT devices do I have?",
+  "chat_history": []
+}
+```
+
+#### 2. Follow-up with Context
+```json
+{
+  "message": "How many are connected?",
+  "chat_history": [
+    {"role": "user", "content": "What IoT devices do I have?"},
+    {"role": "assistant", "content": "You have 5 vehicle devices: XIAORedRocket, XIAONinja, XIAOBike, XIAOJimny, XIAOLiger and 2 robotic devices."}
+  ]
+}
+```
+
+#### 3. Multi-turn Conversation
+```json
+{
+  "message": "Are any of those currently online?",
+  "chat_history": [
+    {"role": "user", "content": "What types of devices do I have?"},
+    {"role": "assistant", "content": "You have VehicleDevice, HouseDevice, RoboticDevice, and PetFeederDevice types."},
+    {"role": "user", "content": "Show me the vehicle ones"},
+    {"role": "assistant", "content": "Here are your vehicle devices: XIAORedRocket, XIAONinja, XIAOBike, XIAOJimny, XIAOLiger."}
+  ]
+}
 ```
 
 ### Testing with Other Tools
@@ -283,6 +377,12 @@ You can also test the API using:
 - **React/Vue/Angular Apps**: Perfect for building IoT dashboard interfaces
 - **Mobile Apps**: Integrate the API for mobile IoT device management
 - **Web Applications**: Any frontend framework can consume this REST API
+
+### API Validation
+
+✅ **Conversation History Verified**: The API correctly maintains context across multiple interactions
+✅ **Contextual Responses**: Agent references previous conversation for intelligent follow-ups
+✅ **Error Handling**: Proper error responses for invalid requests
 
 ## Cleanup
 
